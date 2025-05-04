@@ -1,0 +1,446 @@
+-----------------------------------------------------------------
+
+NOTES on e-ink driver Tiny Tapeout project
+Written by Tim Edwards
+March 16, 2025
+
+-----------------------------------------------------------------
+This project is an e-ink display driver.  It is intended to work
+with the Adafruit ThinkInk 2.13" monochrome e-ink display board
+with SRAM.
+
+Both the e-ink display and the on-board SRAM (and also the on-board
+SD card, although that is not used in this project) have SPI
+interfaces with individual select controls.
+
+The board has a 14-pin connector with power and ground, shared
+SPI control and data lines, and individual SPI select lines for
+the three interfaces.
+
+The project expects that these pins are wired into the input/output
+PMOD on Tiny Tapeout.  The pin connections are as follows
+(directions are from the perspective of the e-ink display and
+board):
+
+e-ink display board pin description		use/direction
+------------------------------------------------------------
+VIN:	3.3V in					power
+3V3:	regulated out (unused)			output
+GND	ground					ground
+SCK	shared SPI clock			input
+MISO	SPI in (from SRAM only)			output
+MOSI	SPI out (to SRAM or e-ink display)	input
+ECS	e-ink select				input
+D/C	e-ink data or command select		input
+SRCS	SRAM select				input
+SDCS	SD card select (unused)			input
+RST	e-ink reset				input
+BUSY	e-ink busy (status read-back)		output
+ENA	ena = !(power down)
+
+Note: If ENA is pulled low, then the board goes into minimum
+power state, but the SRAM powers down and SRAM data is lost.
+ENA has an internal pull-up, so it can be left unconnected
+and the board will stay enabled.
+
+Also note:  BUSY can be ignored if the driver is completely
+self-timed, but eith SDCS and ENA not being used, there are
+sufficient pins on one PMOD to connect and use this.
+
+e-ink display board pin connections to input/output PMOD
+See "Tech specs --> Pinouts" in the Tiny Tapeout web pages.
+See the "SPI" section.  Using the suggested SPI connections
+for the top row, and filling out the bottom row with the
+rest of the signals.  Directions in the following table
+are from the perspective of the Tiny Tapeout board and
+chip.
+
+pin	signal	direction  PMOD pin
+----------------------------------------------------------
+ECS:	uio[0]	output	   1
+MOSI:	uio[1]	output	   2
+MISO:	uio[2]	input	   3
+SCK:	uio[3]	output	   4
+SRCS:	uio[4]	output	   7
+RST:	uio[5]	output	   8
+BUSY:	uio[6]	input	   9
+D/C:	uio[7]	output	   10
+GND:			   11 or 5
+VIN:			   12 or 6
+----------------------------------------------------------
+
+To be clearer, these are the PMOD pins looking into the
+connector socket on the Tiny Tapeout board:
+
+	6  5  4  3  2  1
+	12 11 10 9  8  7
+
+----------------------------------------------------------
+
+SPI Protocols:
+
+These are the routines implemented in the Adafruit driver that
+need to be implemented in the verilog SPI master.  The board
+setup is very simple;  there is an SRAM chip with an SPI
+interface, and an eInk display with an SPI interface.  These
+do not connect to each other (that I am aware of).  Therefore,
+the SRAM is simply storage, and generating the display from
+SRAM requires using both SPI interfaces to read each pixel
+value from SRAM and apply it to the display.
+
+The e-ink display is a complicated piece of hardware, and it
+is controlled by the SSD1680 chip (see
+https://www.crystalfontz.com/controllers/datasheet-viewer.php?id=497)
+The SSD1680 is what implements the e-ink display's SPI controller.
+It supports tri-color displays, so the red color buffer may have
+to be set (?).  It has its own RAM for up to 176 x 296 resolution
+(so is this rotated with respect to the display board?).  RAM is
+176 x 296 x 2 because there is a black/white buffer and a red buffer.
+The D/C pin is optional, and there is a 3-pin interface that does
+not need it, but apparently the Adafruit board is configured for
+the 4-pin operation.  CS is active low.
+
+Protocols are not show in any datasheet that I know of, and
+are instead inferred from the Adafruit source code for the
+SSD1680 driver, found at:
+
+-----------------------------------------------------------
+https://github.com/Adafruit_EPD/src/drivers/Adafruit_SSD1680.cpp
+-----------------------------------------------------------
+
+busy_wait():
+	Read "busy" pin and wait for it to go low.  Polls
+	every 10ms
+
+begin():
+	Run EPD begin()
+	Set black buffer (red buffer is assumed to do nothing
+	with the monochrome display)
+	powerDown()
+
+update(): 
+	Send SPI comand DISP_CTRL2=0x22 with value 0xF4.
+	Send SPI command MASTER_ACTIVATE=0x20 (no value)
+	busy_wait()
+
+powerUp():
+	hardwareReset()
+	delay(100)	(100ms)
+	busy_wait()
+
+	Run init code:
+		SW_RESET=0x12
+		(busy_wait())
+		DATA_MODE=0x11 0x03
+		WRITE_BORDER=0x3c 0x05
+		WRITE_VCOM=0x2c   0x36
+		GATE_VOLTAGE=0x03 0x17
+		SOURCE_VOLTAGE=0x04 0x41 0x00 0x32
+		SET_RAMXCOUNT=0x4e 0x00
+		SET_RAMYCOUNT=0x4f 0x00 0x00
+
+	SET_RAMXPOS 0x00 0x0f			(0x0f = 15 = HEIGHT / 8 - 1)
+	SET_RAMYPOS 0x00 0x00 0xf9 0x00		(0xf9 = 249 = WIDTH - 1)
+	DRIVER_CONTROL 0xf9 0x00 0x00
+
+	(The display driver chip doesn't actually know what
+	 kind of display it's attached to, so this power-up
+	 sequence, which is required any time the display is
+	 powered up, tells the chip what the display size is
+	 and what voltages to apply.)
+
+powerDown():
+	DEEP_SLEEP 0x01
+	delay(100)	(100ms)
+
+	(I'm not sure what is the point of sending a "DEEP_SLEEP"
+	 command if the reset pin
+
+writeRAMCommand(index):
+
+setRAMAddress(x, y):
+	SET_RAMXCOUNT 0x00
+	SET_RAMYCOUNT 0x00 0x00
+
+-----------------------------------------------------------
+Note:  Adafruit_EPD.cpp is the higher-level set of routines.
+It calls low-level routines like update() which are specific
+to each display driver.
+-----------------------------------------------------------
+Note: "use_sram" implies using the on-board SRAM.  If not
+	enabled, then memory is allocated by the driver
+	program, which is not what we want, since we want
+	all memory to be external.
+-----------------------------------------------------------
+
+-----------------------------------------------------------
+https://github.com/Adafruit_EPD/src/drivers/Adafruit_EPD.cpp
+-----------------------------------------------------------
+
+Note:  This board was bought recently and therefore (?) uses
+	the ThinkInk_213_Mono_GDEY0213B74 display initializer
+	(see ThinkInk_213_Mono_GDEY0213B74.h)
+	Note that _xram_offset is zero.
+	Width = 250 (pixels)
+	Height = 122 (pixels)
+
+Initialization:  SPI uses mode 0, MSB first, 4MHz frequency
+	(For 4MHz frequency, set Tiny Tapeout clock to 4MHz.
+	 For FPGA, divide 100MHz clock by 25).
+
+begin():
+	setBlackBuffer()
+	SRAM write8 K640_SEQUENTIAL_MODE MCPSRAM_WRSR
+	set CS high (select e-ink display SPI)
+	hardwareReset()
+
+hardwareReset():
+	Note: This appears to be an active-low reset
+	set RST high
+	delay(10)	(10ms)
+	set RST low
+	delay(10)	(10ms)
+	set RST high
+	delay(10)	(10ms)
+
+drawPixel(x, y, color):		Assume "color" is 0 or 1?
+	compute addr from x and y
+	read value from SRAM
+	Not sure this is needed---this just writes to an SRAM address.
+
+--------------------------------------------------------------------------
+This is the main routine that copies data out of SRAM memory and into the
+display memory.  This is a rather tricky routine.  It requires a 1-byte
+buffer.  It enables both the SRAM and display chip selects at the same
+time.  It starts an SRAM block read from a specific address, then
+applies the WRITE_RAM1 (or WRITE_RAM2, not used here---therefore "location"
+is always zero).  The first byte of memory gets returned on the same
+clocks while the writeRAM command it being issued.  So read those bytes
+back into the buffer, then set D/C to data, and start writing bytes
+back to the SPI as they are read out of the SPI, one byte delayed.
+--------------------------------------------------------------------------
+
+writeSRAMFramebufferToEPD(addr, size, location, invert):
+	set SRAM CS low (active low)
+	MCPSRAM_READ addr_high addr_low
+	c = writeRAMCommand(location)
+	c = SPItransfer(c)
+	set D/C high (data)
+	set CS high
+	set SRAM CS high
+	
+display(sleep):			Sleep is true/false
+	powerUp();
+	setRAMAddress(0, 0);
+	writeSRAMFramebufferToEPD(addr, size, 0)  (or use writeRAM...()?)
+	update();
+	if (sleep) powerDown();
+
+clearDisplay():
+	clearBuffer();
+	display()		Display twice---removes ghost images
+	delay(100)
+	display()
+
+EPD_commandList():		Send a sequence of commands.  Special values
+				in the sequence are 0xFF to wait (argument is
+				wait time in ms) and 0xFE to end sequence
+
+EPD_command():			Send an SPI command to the display.
+EPD_data();			Send SPI data to the display.
+				Note that most display commands are in the
+				form (command data data ...), that is, one byte
+				command followed by N bytes data, terminated by
+				raising CS.
+
+SRAM driver:
+------------------------------------------------------------------
+https://github.com/Adafruit_EPD/src/drivers/Adafruit_MCPSRAM.cpp
+------------------------------------------------------------------
+See the Microchip datasheet for details, but this is a straightforward
+SPI SRAM with the following command codes:
+	Read = 0x03  addrH addrL
+	Write = 0x02  addrH addrL
+	Read status register = 0x05
+	Write status register = 0x01
+	Sequential mode = 0x40
+
+"Sequential mode" value needs to be written into the status register
+to enable stream read/write mode where values are output continuously
+while incrementing the address until the chip select is raised.
+
+Read and Write are followed by the 16-bit address (msb/MSB first) and
+followed by data.
+Read status register and write status register are followed immediately
+by one byte data.
+For the purposes of this demostration, "sequential mode" is written to
+the status register, then all reads and writes are performed sequentially.
+
+--------------------------------------------------------------------------
+General outline of the e-ink driver
+--------------------------------------------------------------------------
+To make this feasible on a Tiny Tapeout slot, the 250 x 122 display will
+be reduced to 34 x 17 by aggregating over blocks of 7 x 7 pixels, and
+leaving a border of 6 pixels left and right, one pixel on the top, and
+two pixels on the bottom.  The memory size, however, is still 578 bits,
+so Tiny Tapeout applications will need to do some clever things like
+run-length and delta encoding.  However, it can store the active display
+in SRAM for as long as the SRAM is powered up.  The SRAM is a Microchip
+23K640 64kbit SPI device, 8192 x 8 = 65536 bits.  The display is 250 x 122
+= 30500, so there are 35036 unused bits, or a bit over 4kB, for additional
+space.  The allocation will be address 0 = the e-ink display framebuffer,
+and rounding up to 256 x 128, takes up half the SRAM, and the other half
+of the SRAM starting at address 4096 can be used for general-purpose
+application memory.
+
+For the purposes of this test repository, the display is a pattern
+generated algorithmically so that it does not need 578 bits of storage
+(could also add an SPI slave interface and take data from a host
+computer).
+
+-------------------------------------------------------------------
+
+The TinyTapeout project implements an SPI master which controls the
+pins (pinout at top of this writeup) assigned to the project.  Both
+the SRAM (8kB) and display use the same SPI, with different select
+pins (see pinout).  Steps 4 through 11 are per the "general operational
+flow" in the SSD1680 datasheet and are not quite the same as the Adafruit
+driver sequence commands.
+
+Step 1:  Power on and reset
+Step 2:  Write sequential mode to SRAM status register
+Step 3:  Apply application code and write the display pixels to SRAM.
+Step 4:  Do display HW reset (pulse reset pin low 10ms)
+Step 5:  Do display SW reset (command 0x12), wait 10ms
+Step 6:  Initialize (Commands 0x01, 0x11, 0x44, 0x45, 0x3c)
+Step 7:  Load waveform LUT (Commands 0x18, 0x22, 0x20), wait on busy
+Step 8:  Transfer image (Commands 0x4e, 0x4f, 0x24, 0x26)
+Step 9:  Soft start (Command 0x0c)
+Step 10: Drive display (Commands 0x22, 0x20), wait on busy
+Step 11: Deep sleep (Command 0x10)
+
+Wait for switch input to select display, perhaps, and repeat from
+Step 2.
+
+-------------------------------------------------------------------
+The same steps above, with SPI details:
+Steps 4 through 11 correspond to the "Adafruit_EPD::display()" routine.
+Steps 4 through 8 correspond to the "powerUp()" routine
+
+Step 2:  Write sequential mode to SRAM status register
+		(SRAM_CS) command = 0x01 data = 0x40
+Step 3:  Apply application code and write the display pixels to SRAM.
+		(SRAM_CS) command = 0x02 addr = 0x00 0x00 data = ...
+
+Step 4:  Do display HW reset (pulse reset pin low 10ms)
+	 This brings the display out of deep sleep mode
+		(RST)
+Step 5:  Do display SW reset (command 0x12)
+		(EPD_CS) command = 0x12, no data
+		wait for busy signal to go low
+	 	wait 10ms
+Step 6:  Initialize (Suggested: Commands 0x01, 0x11, 0x44, 0x45, 0x3c)
+			(DRIVER_CONTROL, DATA_MODE, RAMXPOS, RAMYPOS, BORDER)
+
+		(Actual, in driver:)
+		(EPD_CS) command = 0x11 data = 0x03  (RAM data entry mode)
+		(EPD_CS) command = 0x3c data = 0x05  (border color)
+		(EPD_CS) command = 0x2c data = 0x36  (write Vcom)
+		(EPD_CS) command = 0x03 data = 0x17  (gate voltage)
+		(EPD_CS) command = 0x04 data = 0x41 0x00 0x32 (source voltage)
+
+Step 7:  Load waveform LUT (Suggested: Commands 0x18, 0x22, 0x20), wait on busy
+		(TEMP_CONTROL, DISP_CTRL2, MASTER_ACTIVATE)
+
+		(Actual, in driver:)
+		This is not done in the driver (values already in NVRAM?)
+
+Step 8:  Transfer image (Suggested:  Commands 0x4e, 0x4f, 0x24, 0x26)
+		(RAMXCOUNT, RAMYCOUNT, WRITE_RAM1, WRITE_RAM2)
+
+		(Actual, in driver:)
+		(EPD_CS) command = 0x4e data = 0x00 	 (set X count)
+		(EPD_CS) command = 0x4f data = 0x00 0x00 (set Y count)
+		(EPD_CS) command = 0x44 data = 0x00 0x0f (set X pos)
+		(EPD_CS) command = 0x45 data = 0x00 0x00 0xf9 0x00 (set Y pos)
+		(EPD_CS) command = 0x01 data = 0xf9 0x00 0x00	(driver control)
+
+		(Actual, in driver: writeSRAMFramebufferToEPD() routine:)
+		(SRAM_CS) command = 0x03 data = 0x00 0x00 (read from addr = 0)
+		(EPD_CS) command = 0x24 (stream write:  keep EPD_CS low)
+		(DC) set high (data mode)
+		(SRAM_CS still low) clock entire buffer
+		(SRAM_CS and EPD_CS return high)
+	
+Step 9:  Soft start (Suggested:  Command 0x0c)
+		(SOFTSTART)
+
+		(Actual, in driver:)
+		Not done.
+
+Step 10: Drive display (Suggested:  Commands 0x22, 0x20)
+		(DISP_CTRL2, MASTER_ACTIVATE)
+
+		(Actual, in driver: update() routine)
+		(EPD_CS) command = 0x22 data = 0xf4
+		(EPD_CS) command = 0x20 (no data)
+		wait on busy
+
+Step 11: Deep sleep (Suggested:  Command 0x10)
+		(DEEP_SLEEP)
+
+		(Actual, in driver: powerDown() routine)
+		(EPD_CS) command = 0x10 data = 0x01	(deep sleep)
+
+----------------------------------------------------
+NOTE:  Conclusion for the Tamagotchi project is:
+(1) The SD card interface under the eInk display is not useful because
+    writing an interface to an entire filesystem is way too complicated
+    for a Tiny Tapeout project
+(2) The project needs nonvolatile memory for image storage, or else the
+    image data will quickly exceed the Tiny Tapeout area.
+(3) Therefore, use the SRAM + NVRAM PMOD for data storage and image
+    storage, and use the eInk display only for the eInk display.
+
+----------------------------------------------------
+For reference, the Adafruit driver sequence is the following:
+
+    Adafruit_EPD::display()
+
+	Adafruit_SSD1680::powerUp()
+		hardwareReset();
+			RSTB->1		// Not needed
+			delay(10)	// Not needed?
+			RSTB->0
+			delay(10)
+			RSTB->1
+			delay(10)
+		delay(100);		// Not needed?
+		busy_wait();		// Not needed?
+		EPD_commandList(init_code)
+			EPD_command(SSD1680_SW_RESET=0x12)
+			busy_wait()
+			EPD_command(SSD1680_DATA_MODE=0x11, ...)
+			EPD_command(SSD1680_WRITE_BORDER=0x3c, ...)
+			EPD_command(SSD1680_WRITE_VCOM=0x2c, ...)
+			EPD_command(SSD1680_GATE_VOLTAGE=0x03, ...)
+			EPD_command(SSD1680_SOURCE_VOLTAGE=0x04, ...)
+			EPD_command(SSD1680_SET_RAMXCOUNT=0x4e, ...)
+			EPD_command(SSD1680_SET_RAMYCOUNT=0x4f, ...)
+		EPD_command(SSD1680_SET_RAMXPOS=0x44, ...)
+		EPD_command(SSD1680_SET_RAMYPOS=0x45, ...)
+		EPD_command(SSD1680_DRIVER_CONTROL=0x01, ...)
+
+	setRAMAddress(0, 0)
+	writeSRAMFramebufferToEPD()
+		Adafruit_SSD1680::writeRAMCommand()
+			EPD_command(SSD1680_WRITE_RAM1=0x24, ...)
+
+	Adafruit_SSD1680::update()
+		EPD_command(SSD1680_DISP_CTRL2=0x22, ...)
+		EPD_command(SSD1680_MASTER_ACTIVATE=0x20, ..)
+		busy_wait();
+
+	Adafruit_SSD1680::powerDown()
+		EPD_command(SSD1680_DEEP_SLEEP=0x10, ...)
+

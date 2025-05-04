@@ -1,0 +1,56 @@
+--------------------------------------------------------
+Files to make the TinyTapeout project compatible with a
+Digilent Arty A7-35T FPGA development board or
+Digilent Arty S7-50 FPGA development board
+--------------------------------------------------------
+Note that the Arty A7 runs at 100MHz while the TinyTapeout
+project is expected to top out at 50MHz.  This is taken
+care of by putting the project inside a wrapper that has
+code to divide the clock by a factor of two.
+
+Otherwise, the implementation maps to the Arty
+essentially unchanged, only requiring a configuration
+file to map the I/O to Arty pins.
+
+The 3 PMOD ports (8 x 3 or 24 signals) on the TinyTapeout
+development board map to the PMODs on the Arty as follows:
+
+	JA = input
+	JB = bidirectional
+	JC = output
+
+For this sinusoid synth project, The TinyTapeout audio
+module should connect to JB.
+
+The output appears in 8-bit binary on JC, where it can
+be monitored by a Digilent Analog Discovery 2 logic
+analyzer.
+
+Because there is no 8-button module, the input PMOD
+signals are instead mapped to the switches and buttons,
+in order SW3->SW0 then BTN3->BTN0.
+
+The reset signal for the project is attached to the
+"Reset" pin on the Arty.  Note that the Arty "Reset"
+is a pull-up to power that is grounded by a button
+press, so it is sense inverted and exactly matches
+the "rst_n" input of the TinyTapeout project without
+modification.
+
+The Arty A7 provides a 100MHz clock which is mapped to
+"clk" on the wrapper, then divided by 2 and passed to
+the TinyTapeout project.
+
+See "arty_a7_35T.xdc" for the pin mapping.
+--------------------------------------------------------
+
+When running vivado, choose "tt_um_rte_eink_driver_wrapper.v"
+as the top level, and "arty_a7_35T.xdc" as the pin
+config file.  The wrapper includes the verilog files it
+uses, so there is no need to select any other source
+files or directories.  The application should synthesize
+and program without issue.  I setup up the project in
+vivado with a subdirectory of fpga/ called "tt_eink_driver/",
+although the location of the vivado project is arbitrary
+(fpga/tt_eink_driver was added to .gitignore so that it
+does not get pushed to the repository).
