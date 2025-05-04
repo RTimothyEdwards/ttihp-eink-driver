@@ -50,6 +50,11 @@ module tt_um_rte_eink_driver (
     wire [4:0] xpos;
     wire [3:0] ypos;
 
+    // Unused signals
+    wire spi_err_unused;
+    wire [7:0] spi_out_unused;
+    wire miso_unused;
+
     // Output assignment (see the README file)
     assign uo_out  = 8'b0;	// Only the bidirectional port is used
     assign uio_out = {dcb, 1'b0, resetb, 1'b1, sck, 1'b0, mosi, csb};
@@ -104,16 +109,15 @@ module tt_um_rte_eink_driver (
     `define WAIT2   5'd11
     `define WAIT3   5'd12
     `define START3  5'd13
-    `define WAITX   5'd14
-    `define START4  5'd15
-    `define WRITE4  5'd16
-    `define WAIT4   5'd17
-    `define END4    5'd18
-    `define START5  5'd19
-    `define START6  5'd20
-    `define WRITE6  5'd21
-    `define WAIT6   5'd22
-    `define WAIT7   5'd23
+    `define START4  5'd14
+    `define WRITE4  5'd15
+    `define WAIT4   5'd16
+    `define END4    5'd17
+    `define START5  5'd18
+    `define START6  5'd19
+    `define WRITE6  5'd20
+    `define WAIT6   5'd21
+    `define WAIT7   5'd22
 
     /* Various long-term counts used in the code that are helpful to
      * change to low values in simulation.
@@ -526,12 +530,12 @@ module tt_um_rte_eink_driver (
 	.reg_dat_we(write),	// Write enable
 	.reg_dat_re(1'b0),	// [e-ink display does not send data]
 	.reg_dat_di(data_out),	// Data in to slave (8 bits)
-	.reg_dat_do(),		// Data out from slave (8 bits, unused)
+	.reg_dat_do(spi_out_unused),	// Data out from slave (8 bits, unused)
 	.reg_dat_wait(status),	// Busy
 
-	.err_out(error),	// Error condition
+	.err_out(spi_err_unused),	// Error condition (unused)
 
-	.sdi(miso),    		// SPI input
+	.sdi(miso_unused), 	// SPI input
 	.csb(csb),		// SPI select (display)
 	.sck(sck),		// SPI clock
 	.sdo(mosi),		// SPI output
