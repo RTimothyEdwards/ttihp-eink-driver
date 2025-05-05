@@ -393,7 +393,7 @@ Step 11: Deep sleep (Suggested:  Command 0x10)
 		(EPD_CS) command = 0x10 data = 0x01	(deep sleep)
 
 ----------------------------------------------------
-NOTE:  Conclusion for the Tamagotchi project is:
+NOTE:  Conclusion for the project is:
 (1) The SD card interface under the eInk display is not useful because
     writing an interface to an entire filesystem is way too complicated
     for a Tiny Tapeout project
