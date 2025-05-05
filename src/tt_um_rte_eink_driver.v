@@ -39,10 +39,13 @@ module tt_um_rte_eink_driver (
     wire status;	// Wait status from the SPI master module
     wire [7:0] data_in; // Data from slave (SRAM) returned from SPI master module
     wire busy;		// "Busy" signal returned from the e-ink display
-    wire csb;		// Display SPI slave select (Note: SRAM CS is unused)
+    wire csb;		// Display SPI slave select
+    reg  sramcsb;	// SRAM SPI slave select
     wire sck;		// SPI clock
     wire mosi;		// SDO from SPI master
     wire mosienb;	// SDO enable (sense negative) from SPI master
+    reg  passthru;	// Pass-through mode
+    reg  maskcsb;	// Mask display CSB for accessing SRAM only
 
     reg  [7:0] inbuf;	// Buffered inputs
     reg  [7:0] inval;	// Double-buffered inputs
@@ -55,8 +58,8 @@ module tt_um_rte_eink_driver (
     wire miso;
 
     // Output assignment (see the README file)
-    assign uo_out  = 8'b0;	// Only the bidirectional port is used
-    assign uio_out = {dcb, 1'b0, resetb, 1'b1, sck, 1'b0, mosi, csb};
+    assign uo_out  = {7'b0, miso};	// Low bit is a copy of uio_in[2]
+    assign uio_out = {dcb, 1'b0, resetb, sramcsb, sck, 1'b0, mosi, csb};
     // 101110?1 <---  out,  in,   out,    out, out,  in,  ~mosienb, out
     assign uio_oe  = {6'b101110, ~mosienb, 1'b1};
 
@@ -118,6 +121,12 @@ module tt_um_rte_eink_driver (
     `define WRITE6  5'd20
     `define WAIT6   5'd21
     `define WAIT7   5'd22
+    `define THRU    5'd23
+    `define STARTS1 5'd24
+    `define STARTS2 5'd25
+    `define STARTS3 5'd26
+    `define WRITES2 5'd27
+    `define WAITS2  5'd28
 
     /* Various long-term counts used in the code that are helpful to
      * change to low values in simulation.
@@ -172,6 +181,9 @@ module tt_um_rte_eink_driver (
 	    counter <= 0;		// Reset the bit counter
 	    timer <= 0;			// Reset the delay counter
 	    data_out <= 0;		// Clear data byte to SPI
+	    sramcsb <= 1'b1;		// Do not access SRAM by default
+	    passthru <= 0;		// No pass-through mode by default
+	    maskcsb <= 0;		// Do not mask the display CSB by default
 	end else begin
 	    inval <= inbuf;		// Double-buffer the input state
 	    inbuf <= ui_in;		// Capture input state
@@ -180,11 +192,94 @@ module tt_um_rte_eink_driver (
 
 	    case (state)
 		`IDLE : begin
+	 	    /* Setting the upper bits of inval to 1 puts the
+		     * driver into pass-through mode, and enables the
+		     * SRAM SPI interface, and allows the SRAM to be
+		     * accessed for writes
+		     */
+		    if (inbuf[7:4] == 4'b1111) begin
+			passthru <= 1'b1;
+			sramcsb <= 1'b0;
+			state <= `THRU;
+		    end
+
 		    /* Refresh the display on any input change, with
 		     * the display corresponding to the input value
 		     */
-		    if ((inval != inbuf) && (inbuf != 0))
-			state <= `HWRESET;
+		    else if ((inval != inbuf) && (inbuf != 0))
+			state <= `STARTS1;
+
+		    else
+			sramcsb <= 1'b1;
+		end
+
+		`THRU : begin
+		    /* Setting inval back to zero clears pass-through mode,
+		     * clears sramcsb, and returns to idle mode.
+		     * 
+		     */
+		    if (inbuf == 0) begin
+			passthru <= 1'b0;
+			sramcsb <= 1'b1;
+			state <= `IDLE;
+		    end
+		end
+
+		/* The following is a set of commands to pass to the SRAM
+		 * to put it in sequential read mode.  Values will be read
+		 * continuously while the display is written, allowing a
+		 * mode where the display is generated from the SRAM
+		 * contents (with an address offset).
+		 */
+
+		`STARTS1: begin
+		    counter <= 0;
+		    timer <= 0;
+		    maskcsb <= 1'b1;		// Disable the display's SPI
+		    state <= `STARTS2;
+		end
+
+		`STARTS2 : begin
+		    sramcsb <= 1'b0;		// Access the SRAM
+		    state <= `STARTS3;
+		end
+
+		`STARTS3 : begin
+		    case (counter[5:0])
+			0: data_out <= 8'h01;	// Write SRAM status register
+			1: data_out <= 8'h40;	// Sequential mode
+			2: data_out <= 8'h03;	// Stream read
+			3: data_out <= 8'h00;	// Address zero (high)
+			4: data_out <= 8'h00;	// Address zero (low)
+		    endcase;
+		    state <= `WRITES2;
+		end
+		
+		`WRITES2 : begin
+		    if (status == 1'b1) begin
+			state <= `WAITS2;
+		    	write <= 1'b0;
+		    end else begin
+		        write <= 1'b1;
+		    end
+		end
+
+		`WAITS2 : begin
+		    write <= 1'b0;
+		    if (status == 1'b0) begin
+
+			/* End transmission before each subsequent command */
+			case (counter[5:0])
+			    1: sramcsb <= 1'b1;		/* End command */
+			endcase;
+
+			counter <= counter + 1;
+			if (counter == 4) begin
+		    	    maskcsb <= 1'b0;		// Enable the display's SPI
+			    state <= `HWRESET;
+			end else
+			    state <= `STARTS2;
+		    end
 		end
 
 		/* A hardware reset is required to pull the display out of
@@ -372,11 +467,12 @@ module tt_um_rte_eink_driver (
 		    end else if (inval[4] == 1'b1) begin
 			data_out <= {8{counter[0] ^ counter[6]}};	// Checker S
 		    end else if (inval[5] == 1'b1) begin
-			data_out <= {8{counter[1] ^ counter[7]}};	// Checker M
+			// data_out <= {8{counter[1] ^ counter[7]}};	// (Checker M)
+			data_out <= data_in;				// SRAM data
 		    end else if (inval[6] == 1'b1) begin
 			data_out <= {8{counter[2] ^ counter[8]}};	// Checker L
 		    end else if (inval[7] == 1'b1) begin
-			// data_out <= {8{counter[3] ^ counter[9]}};	// Checker XL
+			// data_out <= {8{counter[3] ^ counter[9]}};	// (Checker XL)
 
 			// Demonstration of a drawn pattern on a 32 x 16 coarse grid
 			// Note: xpos = counter[11:7], ypos = counter[3:0]
@@ -530,10 +626,15 @@ module tt_um_rte_eink_driver (
 	.mode(1'b0),		// SCK edge (default, mode 0)
 	.enable(1'b1),		// Enable/disable (always enabled)
 
+	.passthru(passthru),	// Pass-through mode (for SRAM)
+	.pass_sck(ui_in[0]),	// Pass-through clock
+	.pass_mosi(ui_in[1]),	// Pass-through data out
+	.maskcsb(maskcsb),	// Mask display CSB for accessing SRAM only
+
 	.reg_dat_we(write),	// Write enable
 	.reg_dat_re(1'b0),	// [e-ink display does not send data]
 	.reg_dat_di(data_out),	// Data in to slave (8 bits)
-	.reg_dat_do(data_in),	// Data out from slave (8 bits, unused)
+	.reg_dat_do(data_in),	// Data out from slave (8 bits, coming from SRAM)
 	.reg_dat_wait(status),	// Busy
 
 	.err_out(spi_err_unused),	// Error condition (unused)

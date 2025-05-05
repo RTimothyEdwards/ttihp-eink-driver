@@ -81,12 +81,17 @@ module simple_spi_master (
     input wire   clk,	 // master clock (assume 100MHz)
 
     input wire [7:0] prescaler,	// Prescaler value
-    input wire     invsck,		// Inverted SCK
-    input wire     invcsb,		// Inverted CSB
+    input wire     invsck,	// Inverted SCK
+    input wire     invcsb,	// Inverted CSB
     input wire     mlb,		// msb/lsb first
-    input wire     stream,		// Stream mode
-    input wire     mode,		// SCK edge
-    input wire     enable,		// Enable/disable
+    input wire     stream,	// Stream mode
+    input wire     mode,	// SCK edge
+    input wire     enable,	// Enable/disable
+
+    input wire	   passthru,	// Pass-through mode
+    input wire	   pass_sck,	// Pass-through clock
+    input wire	   pass_mosi,	// Pass-through mosi
+    input wire	   maskcsb,	// Do not change CSB
 
     input wire 	 	reg_dat_we,	// Write enable
     input wire 	 	reg_dat_re,	// Read enable
@@ -99,7 +104,7 @@ module simple_spi_master (
     input  wire	 sdi,	 // SPI input
     output wire	 csb,	 // SPI chip select
     output wire	 sck,	 // SPI clock
-    output reg	 sdo,	 // SPI output
+    output wire	 sdo,	 // SPI output
     output wire  sdoenb  // SPI output enable (sense negative)
 );
 
@@ -112,14 +117,18 @@ module simple_spi_master (
     reg       hsck, icsb;
     reg [1:0] state;
     reg       isck;
+    reg	      mosi;
  
     reg [7:0] treg, rreg, d_latched;
     reg [2:0] nbit;
     reg [7:0] count;
 
     // Define behavior for inverted SCK and inverted CSB
-    assign    	  csb = (enable == 1'b0) ? 1'bz : (invcsb) ? ~icsb : icsb;
-    assign	  sck = (enable == 1'b0) ? 1'bz : (invsck) ? ~isck : isck;
+    assign    	  csb = (enable == 1'b0) ? 1'b1 : (maskcsb) ? 1'b1 :
+			(invcsb) ? ~icsb : icsb;
+    assign	  sck = (enable == 1'b0) ? 1'b0 : (passthru) ? pass_sck :
+			(invsck) ? ~isck : isck;
+    assign	  sdo = (passthru) ? pass_mosi : mosi;
 
     // No bidirectional 3-pin mode defined, so SDO is enabled whenever CSB is low.
     assign	  sdoenb = (enable == 1'b0) ? 1'b1 : icsb;
@@ -250,7 +259,7 @@ module simple_spi_master (
         if (resetn == 1'b0) begin
 	    rreg <= 8'hff;
 	    treg <= 8'hff;
-	    sdo <= 1'b0;
+	    mosi <= 1'b0;
         end else begin 
 	    if (isck == 1'b0 && (state == SENDL || state == SENDH)) begin
 	        if (mlb == 1'b1) begin
@@ -265,20 +274,20 @@ module simple_spi_master (
             if (w_latched == 1'b1) begin
 	        if (mlb == 1'b1) begin
 		    treg <= {d_latched[7], d_latched[7:1]};
-		    sdo <= d_latched[0];
+		    mosi <= d_latched[0];
 	        end else begin
 		    treg <= {d_latched[6:0], d_latched[0]};
-		    sdo <= d_latched[7];
+		    mosi <= d_latched[7];
 	        end // mlb
 	    end else if ((mode ^ isck) == 1'b1) begin
 	        if (mlb == 1'b1) begin
 		    // LSB first, shift right
 		    treg <= {treg[7], treg[7:1]};
-		    sdo <= treg[0];
+		    mosi <= treg[0];
 	        end else begin
 		    // MSB first shift LEFT
 		    treg <= {treg[6:0], treg[0]};
-		    sdo <= treg[7];
+		    mosi <= treg[7];
 	        end // mlb
 	    end // write on mode ^ isck
         end // resetn

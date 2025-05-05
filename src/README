@@ -3,6 +3,8 @@
 NOTES on e-ink driver Tiny Tapeout project
 Written by Tim Edwards
 March 16, 2025
+Updated May 5, 2025 with modification to allow display of
+arbitrary images stored in SRAM.
 
 -----------------------------------------------------------------
 This project is an e-ink display driver.  It is intended to work
@@ -100,7 +102,7 @@ The D/C pin is optional, and there is a 3-pin interface that does
 not need it, but apparently the Adafruit board is configured for
 the 4-pin operation.  CS is active low.
 
-Protocols are not show in any datasheet that I know of, and
+Protocols are not shown in any datasheet that I know of, and
 are instead inferred from the Adafruit source code for the
 SSD1680 driver, found at:
 
@@ -294,9 +296,15 @@ of the SRAM starting at address 4096 can be used for general-purpose
 application memory.
 
 For the purposes of this test repository, the display is a pattern
-generated algorithmically so that it does not need 578 bits of storage
-(could also add an SPI slave interface and take data from a host
-computer).
+generated algorithmically so that it does not need 578 bits of storage.
+However, one of the patterns, instead of being algorithmically
+generated, is read directly from the SRAM, and can generate an image
+at the full resolution of 250x122.  Because the SRAM is volatile,
+this will display random noise on power-up.  The driver implements
+a "pass-through" mode which allows the input vector to directly
+drive the SRAM SPI's clock and data lines by bit-bang, and so can
+(slowly) write an image into SRAM which can then be displayed along
+with the other patterns. 
 
 -------------------------------------------------------------------
 
@@ -397,10 +405,14 @@ NOTE:  Conclusion for the project is:
 (1) The SD card interface under the eInk display is not useful because
     writing an interface to an entire filesystem is way too complicated
     for a Tiny Tapeout project
-(2) The project needs nonvolatile memory for image storage, or else the
+(2) The project needs external memory for image storage, or else the
     image data will quickly exceed the Tiny Tapeout area.
-(3) Therefore, use the SRAM + NVRAM PMOD for data storage and image
-    storage, and use the eInk display only for the eInk display.
+(3) Therefore, use the SRAM on the eInk display for data and image
+    storage.
+(4) If multiple images need to be stored and displayed, then an
+    external NVRAM PMOD board is needed.
+(5) Multiple volatile images can be stored but the driver needs to be
+    modified to specify the starting address of each.
 
 ----------------------------------------------------
 For reference, the Adafruit driver sequence is the following:

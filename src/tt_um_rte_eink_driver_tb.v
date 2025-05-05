@@ -23,6 +23,7 @@ module tt_um_rte_eink_driver_tb;
     wire	dcb;	// e-ink display command/data
     wire	sck;	// SPI clock
     wire	csb;	// e-ink display SPI select (sense negative)
+    wire	sramcsb; // SRAM SPI select (sense negative)
     wire	resetb;	// e-ink display reset (sense negative)
 
     reg		busy;	// e-ink display busy
@@ -68,6 +69,51 @@ module tt_um_rte_eink_driver_tb;
 	ui_in <= 8;
 	#1500000;
 
+	ui_in <= 0;
+	#10000;
+
+	// Put into pass-through mode
+	ui_in <= 8'hf0;
+	#5000;
+
+	// Clock a command 0x01
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+	ui_in <= 8'hf1;
+	#1000;
+	ui_in <= 8'hf2;
+	#1000;
+	ui_in <= 8'hf3;
+	#1000;
+	ui_in <= 8'hf0;
+	#1000;
+
+	// Exit pass-through mode
+	ui_in <= 8'h00;
+	#10000;
+
 	$finish;
     end
 
@@ -89,6 +135,7 @@ module tt_um_rte_eink_driver_tb;
     assign dcb    = uio_out[7];
     assign sck    = uio_out[3];
     assign csb    = uio_out[0];
+    assign sramcsb = uio_out[4];
     assign resetb = uio_out[5];
 
     assign uio_out[6] = busy;
