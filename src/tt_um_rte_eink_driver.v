@@ -52,8 +52,7 @@ module tt_um_rte_eink_driver (
 
     // Unused signals
     wire spi_err_unused;
-    wire [7:0] spi_out_unused;
-    wire miso_unused;
+    wire miso;
 
     // Output assignment (see the README file)
     assign uo_out  = 8'b0;	// Only the bidirectional port is used
@@ -62,7 +61,8 @@ module tt_um_rte_eink_driver (
     assign uio_oe  = {6'b101110, ~mosienb, 1'b1};
 
     assign busy = uio_in[6];
-    // assign miso = uio_in[2];		// SRAM not being used
+    assign miso = uio_in[2];		// SRAM not being used, but assign
+					// a pin anyway.
 
     // List all unused inputs to prevent warnings
     wire _unused = &{ena, 1'b0};
@@ -505,6 +505,9 @@ module tt_um_rte_eink_driver (
 		    if (busy == 1'b0)
 			state <= `START6;
 		end
+
+		default :
+		    state <= `IDLE;
 	    endcase
 	end
     end
@@ -530,12 +533,12 @@ module tt_um_rte_eink_driver (
 	.reg_dat_we(write),	// Write enable
 	.reg_dat_re(1'b0),	// [e-ink display does not send data]
 	.reg_dat_di(data_out),	// Data in to slave (8 bits)
-	.reg_dat_do(spi_out_unused),	// Data out from slave (8 bits, unused)
+	.reg_dat_do(data_in),	// Data out from slave (8 bits, unused)
 	.reg_dat_wait(status),	// Busy
 
 	.err_out(spi_err_unused),	// Error condition (unused)
 
-	.sdi(miso_unused), 	// SPI input
+	.sdi(miso), 		// SPI input
 	.csb(csb),		// SPI select (display)
 	.sck(sck),		// SPI clock
 	.sdo(mosi),		// SPI output
